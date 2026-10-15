@@ -1,0 +1,226 @@
+@page "/group/{Id:long}/settings"
+@inject DataService Data
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>Tric - Gruppeneinstellungen</PageTitle>
+
+@if (_registry is null)
+{
+    @if (_loaded)
+    {
+        <MudAlert Severity="Severity.Warning">Gruppe nicht gefunden.</MudAlert>
+    }
+    else
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+}
+else
+{
+    <MudStack Spacing="3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Href="@($"group/{Id}")" aria-label="Zurück" />
+            <MudText Typo="Typo.h6">Gruppeneinstellungen</MudText>
+        </MudStack>
+
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Allgemein</MudText>
+                <MudTextField @bind-Value="_title" Label="Titel" Immediate="true" />
+                <MudTextField @bind-Value="_emoji" Label="Emoji" MaxLength="8" />
+                <MudSelect T="string" @bind-Value="_category" Label="Kategorie">
+                    @foreach (var category in GroupCategories)
+                    {
+                        <MudSelectItem Value="@category">@category</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudText Typo="Typo.caption">Währung: @_registry.Currency (kann nicht geändert werden)</MudText>
+                <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_busy" OnClick="SaveGeneralAsync">Speichern</MudButton>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Mitglieder</MudText>
+                @foreach (var member in _members)
+                {
+                    var m = member;
+                    <MudStack Row="true" AlignItems="AlignItems.Center">
+                        <MudTextField @bind-Value="_names[m.Uuid!]" Label="Name" Margin="Margin.Dense" Immediate="true" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Disabled="_busy" OnClick="() => RemoveMemberAsync(m)" aria-label="Mitglied entfernen" />
+                    </MudStack>
+                }
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="RenameAsync">Namen speichern</MudButton>
+                <MudDivider />
+                <MudStack Row="true" AlignItems="AlignItems.Center">
+                    <MudTextField @bind-Value="_newMember" Label="Neues Mitglied" Margin="Margin.Dense" Immediate="true" />
+                    <MudIconButton Icon="@Icons.Material.Filled.PersonAdd" Disabled="@(_busy || string.IsNullOrWhiteSpace(_newMember))" OnClick="AddMemberAsync" aria-label="Mitglied hinzufügen" />
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Teilen</MudText>
+                <MudTextField Value="@ShareLink" ReadOnly="true" Label="Freigabe-Link" Adornment="Adornment.End"
+                              AdornmentIcon="@Icons.Material.Filled.ContentCopy" OnAdornmentClick="CopyLinkAsync" />
+                <MudText Typo="Typo.caption">Jeder mit diesem Link kann die Gruppe lesen und bearbeiten.</MudText>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Gruppe verwalten</MudText>
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="ToggleArchiveAsync">
+                    @(Format.IsArchived(_registry) ? "Wiederherstellen" : "Archivieren")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="_busy" OnClick="DeleteAsync">Gruppe löschen</MudButton>
+            </MudStack>
+        </MudPaper>
+    </MudStack>
+}
+
+@code {
+    private static readonly string[] GroupCategories = ["GENERAL", "OTHER", "TRAVEL", "FOOD_AND_DRINK", "TRANSPORT", "SHOPPING", "ENTERTAINMENT", "GROCERIES"];
+
+    [Parameter] public long Id { get; set; }
+
+    private Registry? _registry;
+    private List<RegistryMembershipNonUser> _members = [];
+    private readonly Dictionary<string, string> _names = [];
+    private string? _title;
+    private string? _emoji;
+    private string _category = "GENERAL";
+    private string _newMember = string.Empty;
+    private bool _loaded;
+    private bool _busy;
+
+    private string ShareLink => $"https://tricount.com/{_registry?.PublicIdentifierToken}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _registry = (await Data.GetCachedRegistriesAsync()).FirstOrDefault(r => r.Id == Id);
+        _loaded = true;
+        if (_registry is not null)
+        {
+            Fill(_registry);
+        }
+    }
+
+    private void Fill(Registry registry)
+    {
+        _title = registry.Title;
+        _emoji = registry.Emoji;
+        _category = registry.Category ?? "GENERAL";
+        _members = [.. Format.Members(registry).Where(m => m.Uuid is not null && m.Status is null or "ACTIVE")];
+        _names.Clear();
+        foreach (var member in _members)
+        {
+            _names[member.Uuid!] = Format.MemberName(member);
+        }
+    }
+
+    private Membership ToMembership(RegistryMembershipNonUser member, string name) => new()
+    {
+        Uuid = member.Uuid!,
+        Status = "ACTIVE",
+        AutoAddCardTransaction = string.Empty,
+        Alias = new MembershipAlias { Type = "UUID", Value = member.Uuid!, Name = name }
+    };
+
+    private async Task RunAsync(Func<Task> action, string? success = null)
+    {
+        _busy = true;
+        try
+        {
+            await action();
+            _registry = (await Data.GetCachedRegistriesAsync()).FirstOrDefault(r => r.Id == Id);
+            if (_registry is not null)
+            {
+                Fill(_registry);
+            }
+
+            if (success is not null)
+            {
+                Snackbar.Add(success, Severity.Success);
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Fehlgeschlagen: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task SaveGeneralAsync() => RunAsync(
+        () => Data.UpdateRegistryAsync(Id, new UpdateRegistryRequest { Title = _title, Emoji = _emoji, Category = _category }),
+        "Gespeichert");
+
+    private Task RenameAsync() => RunAsync(
+        () => Data.UpdateRegistryAsync(Id, new UpdateRegistryRequest
+        {
+            Memberships = [.. _members.Select(m => ToMembership(m, _names[m.Uuid!].Trim()))]
+        }),
+        "Namen gespeichert");
+
+    private Task AddMemberAsync() => RunAsync(async () =>
+    {
+        await Data.UpdateRegistryAsync(Id, new UpdateRegistryRequest
+        {
+            Memberships = [new Membership { Uuid = Guid.NewGuid().ToString(), Status = "ACTIVE" }]
+        });
+        _newMember = string.Empty;
+    }, "Mitglied hinzugefügt");
+
+    private async Task RemoveMemberAsync(RegistryMembershipNonUser member)
+    {
+        var confirmed = await DialogService.ShowMessageBoxAsync("Mitglied entfernen", $"{Format.MemberName(member)} wirklich entfernen?", yesText: "Entfernen", cancelText: "Abbrechen");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await RunAsync(() => Data.UpdateRegistryAsync(Id, new UpdateRegistryRequest
+        {
+            Memberships = [.. _members.Where(m => m.Id != member.Id).Select(m => ToMembership(m, _names[m.Uuid!].Trim()))],
+            DeletedMembershipIds = [member.Id]
+        }), "Mitglied entfernt");
+    }
+
+    private Task ToggleArchiveAsync() => RunAsync(
+        () => Data.UpdateRegistryAsync(Id, new UpdateRegistryRequest { Status = Format.IsArchived(_registry!) ? "READ_WRITE" : "READ_ONLY" }),
+        "Gespeichert");
+
+    private async Task DeleteAsync()
+    {
+        var confirmed = await DialogService.ShowMessageBoxAsync("Gruppe löschen", "Die Gruppe wird für alle dauerhaft gelöscht. Fortfahren?", yesText: "Löschen", cancelText: "Abbrechen");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await Data.DeleteRegistryAsync(Id);
+            Navigation.NavigateTo("/");
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Löschen fehlgeschlagen: {ex.Message}", Severity.Error);
+            _busy = false;
+        }
+    }
+
+    private async Task CopyLinkAsync()
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", ShareLink);
+        Snackbar.Add("Link kopiert", Severity.Info);
+    }
+}

@@ -1,0 +1,106 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject DataService Data
+@inject CacheService Cache
+@inject ISnackbar Snackbar
+
+<MudThemeProvider @ref="_themeProvider" Theme="_theme" IsDarkMode="_isDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+	<MudAppBar Elevation="1" Dense="true">
+		<MudText Typo="Typo.h6">Tric</MudText>
+		<MudSpacer />
+		<MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+					   Color="Color.Inherit" OnClick="ToggleDarkModeAsync" aria-label="Design wechseln" />
+		<MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" Disabled="_refreshing"
+					   OnClick="RefreshAsync" aria-label="Aktualisieren" />
+		@if (_refreshing)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Secondary" Class="refresh-progress" />
+		}
+	</MudAppBar>
+
+	<MudMainContent Class="tric-main">
+		<MudContainer MaxWidth="MaxWidth.Medium" Class="pa-2 pa-sm-4">
+			@Body
+		</MudContainer>
+	</MudMainContent>
+
+	<MudPaper Class="bottom-nav" Elevation="8" Square="true">
+		<MudButton Href="/" Variant="Variant.Text" Color="@NavColor("")" StartIcon="@Icons.Material.Filled.Groups"
+				   Class="bottom-nav-item">Gruppen</MudButton>
+		<MudButton Href="settings" Variant="Variant.Text" Color="@NavColor("settings")" StartIcon="@Icons.Material.Filled.Settings"
+				   Class="bottom-nav-item">Einstellungen</MudButton>
+	</MudPaper>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+	Ein unerwarteter Fehler ist aufgetreten.
+	<a href="." class="reload">Neu laden</a>
+	<span class="dismiss">🗙</span>
+</div>
+
+@code {
+	private MudThemeProvider? _themeProvider;
+	private bool _isDarkMode;
+	private bool _refreshing;
+
+	private readonly MudTheme _theme = new()
+	{
+		PaletteLight = new PaletteLight { Primary = "#2e7d32", Secondary = "#ef6c00", AppbarBackground = "#2e7d32" },
+		PaletteDark = new PaletteDark { Primary = "#66bb6a", Secondary = "#ffa726" }
+	};
+
+	protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+	protected override async Task OnAfterRenderAsync(bool firstRender)
+	{
+		if (firstRender)
+		{
+			var stored = await Cache.GetAsync<bool?>("darkmode");
+			_isDarkMode = stored ?? (_themeProvider is not null && await _themeProvider.GetSystemDarkModeAsync());
+			StateHasChanged();
+		}
+	}
+
+	private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
+
+	private Color NavColor(string path)
+	{
+		var relative = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].TrimEnd('/');
+		var active = path.Length == 0
+			? !relative.StartsWith("settings", StringComparison.OrdinalIgnoreCase)
+			: relative.StartsWith(path, StringComparison.OrdinalIgnoreCase);
+		return active ? Color.Primary : Color.Default;
+	}
+
+	private async Task ToggleDarkModeAsync()
+	{
+		_isDarkMode = !_isDarkMode;
+		await Cache.SetAsync("darkmode", _isDarkMode);
+	}
+
+	private async Task RefreshAsync()
+	{
+		_refreshing = true;
+		try
+		{
+			await Data.RefreshAllAsync();
+			Snackbar.Add("Daten aktualisiert", Severity.Success);
+		}
+		catch (HttpRequestException ex)
+		{
+			Snackbar.Add($"Aktualisieren fehlgeschlagen: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_refreshing = false;
+		}
+	}
+
+	public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

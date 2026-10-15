@@ -1,0 +1,26 @@
+@if (Balances.Count == 0)
+{
+    <MudText Color="Color.Secondary">Noch keine Salden.</MudText>
+}
+else
+{
+    <MudList T="string" Dense="true">
+        @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null))
+        {
+            var balance = Balances.GetValueOrDefault(member.Uuid!);
+            <MudListItem T="string">
+                <MudStack Row="true" Justify="Justify.SpaceBetween">
+                    <MudText>@Format.MemberName(member)@(member.Uuid == Registry.MembershipUuidActive ? " (ich)" : "")</MudText>
+                    <MudText Color="@(balance < 0 ? Color.Error : balance > 0 ? Color.Success : Color.Default)">
+                        @Format.Money(balance, Registry.Currency)
+                    </MudText>
+                </MudStack>
+            </MudListItem>
+        }
+    </MudList>
+}
+
+@code {
+    [Parameter, EditorRequired] public Registry Registry { get; set; } = default!;
+    [Parameter, EditorRequired] public Dictionary<string, decimal> Balances { get; set; } = default!;
+}

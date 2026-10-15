@@ -1,0 +1,77 @@
+@page "/settings"
+@inject CacheService Cache
+@inject DataService Data
+@inject SessionService Session
+@inject ISnackbar Snackbar
+
+<PageTitle>Tric - Einstellungen</PageTitle>
+
+<MudStack Spacing="3">
+	<MudText Typo="Typo.h5">Einstellungen</MudText>
+
+	<MudPaper Outlined="true" Class="pa-3">
+		<MudStack Spacing="2">
+			<MudText Typo="Typo.subtitle1">Daten</MudText>
+			<MudText Typo="Typo.body2">
+				Gruppen, Ausgaben und Anhänge werden lokal in diesem Browser zwischengespeichert und beim Aktualisieren erneuert.
+			</MudText>
+			<MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="RefreshAsync">Alles aktualisieren</MudButton>
+			<MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="_busy" OnClick="ClearAsync">Zwischenspeicher leeren</MudButton>
+		</MudStack>
+	</MudPaper>
+
+	<MudPaper Outlined="true" Class="pa-3">
+		<MudStack Spacing="1">
+			<MudText Typo="Typo.subtitle1">Sitzung</MudText>
+			<MudText Typo="Typo.body2">Benutzer-ID: @_userId</MudText>
+		</MudStack>
+	</MudPaper>
+</MudStack>
+
+@code {
+	private bool _busy;
+	private long? _userId;
+
+	protected override async Task OnAfterRenderAsync(bool firstRender)
+	{
+		if (!firstRender)
+		{
+			return;
+		}
+
+		try
+		{
+			await Session.EnsureSessionAsync();
+			_userId = Session.UserId;
+			StateHasChanged();
+		}
+		catch (HttpRequestException ex)
+		{
+			Snackbar.Add($"Sitzung nicht verfügbar: {ex.Message}", Severity.Warning);
+		}
+	}
+
+	private async Task RefreshAsync()
+	{
+		_busy = true;
+		try
+		{
+			await Data.RefreshAllAsync();
+			Snackbar.Add("Daten aktualisiert", Severity.Success);
+		}
+		catch (HttpRequestException ex)
+		{
+			Snackbar.Add($"Fehlgeschlagen: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_busy = false;
+		}
+	}
+
+	private async Task ClearAsync()
+	{
+		await Cache.ClearAsync();
+		Snackbar.Add("Zwischenspeicher geleert", Severity.Info);
+	}
+}

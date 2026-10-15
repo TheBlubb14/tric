@@ -1,0 +1,88 @@
+@inject DataService Data
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+@{
+    var transfers = SettlementCalculator.Calculate(Balances);
+}
+
+@if (transfers.Count == 0)
+{
+    <MudText Color="Color.Secondary">Alles ausgeglichen.</MudText>
+}
+else
+{
+    <MudStack Spacing="2">
+        @foreach (var transfer in transfers)
+        {
+            var t = transfer;
+            <MudPaper Outlined="true" Class="pa-3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudStack Spacing="0">
+                        <MudText>@NameOf(t.FromMembershipUuid) → @NameOf(t.ToMembershipUuid)</MudText>
+                        <MudText Typo="Typo.h6">@Format.Money(t.Amount, Registry.Currency)</MudText>
+                    </MudStack>
+                    @if (!Format.IsArchived(Registry))
+                    {
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="() => RecordAsync(t)">Als bezahlt erfassen</MudButton>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+    </MudStack>
+}
+
+@code {
+    [Parameter, EditorRequired] public Registry Registry { get; set; } = default!;
+    [Parameter, EditorRequired] public Dictionary<string, decimal> Balances { get; set; } = default!;
+
+    private bool _busy;
+
+    private string NameOf(string uuid)
+        => Format.MemberName(Format.Members(Registry).FirstOrDefault(m => m.Uuid == uuid));
+
+    private async Task RecordAsync(Transfer transfer)
+    {
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            "Rückzahlung erfassen",
+            $"{NameOf(transfer.FromMembershipUuid)} hat {Format.Money(transfer.Amount, Registry.Currency)} an {NameOf(transfer.ToMembershipUuid)} gezahlt?",
+            yesText: "Erfassen", cancelText: "Abbrechen");
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var value = transfer.Amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            var request = new RegistryEntryRequest
+            {
+                Uuid = Guid.NewGuid().ToString(),
+                Description = "Rückzahlung",
+                Amount = new Amount { Value = value, Currency = Registry.Currency },
+                MembershipUuidOwner = transfer.FromMembershipUuid,
+                TypeTransaction = "BALANCE",
+                Status = EntryStatus.Active,
+                Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.ffffff", System.Globalization.CultureInfo.InvariantCulture),
+                Allocations =
+                [
+                    new RegistryEntryAllocationRequest { MembershipUuid = transfer.ToMembershipUuid, Amount = new Amount { Value = value, Currency = Registry.Currency }, Type = "AMOUNT" },
+                    new RegistryEntryAllocationRequest { MembershipUuid = transfer.FromMembershipUuid, Amount = new Amount { Value = "0", Currency = Registry.Currency }, Type = "AMOUNT" }
+                ]
+            };
+
+            await Data.SaveEntryAsync(Registry.Id, null, request);
+            Snackbar.Add("Rückzahlung erfasst", Severity.Success);
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Fehlgeschlagen: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

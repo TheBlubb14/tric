@@ -1,0 +1,459 @@
+@page "/group/{Id:long}/entry"
+@page "/group/{Id:long}/entry/{EntryId:long}"
+@inject DataService Data
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Tric - @(EntryId is null ? "Neue Ausgabe" : "Ausgabe bearbeiten")</PageTitle>
+
+@if (_registry is null)
+{
+    @if (_loaded)
+    {
+        <MudAlert Severity="Severity.Warning">Gruppe nicht gefunden.</MudAlert>
+    }
+    else
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+}
+else
+{
+    <MudStack Spacing="3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="Back" aria-label="Zurück" />
+            <MudText Typo="Typo.h6">@(EntryId is null ? "Neue Ausgabe" : "Ausgabe bearbeiten")</MudText>
+        </MudStack>
+
+        <MudToggleGroup T="string" @bind-Value="_type" Color="Color.Primary" FixedContent="true" Size="Size.Small">
+            <MudToggleItem Value="@("NORMAL")" Text="Ausgabe" />
+            <MudToggleItem Value="@("INCOME")" Text="Einnahme" />
+            <MudToggleItem Value="@("BALANCE")" Text="Rückzahlung" />
+        </MudToggleGroup>
+
+        <MudTextField @bind-Value="_description" Label="Beschreibung" Immediate="true" />
+
+        <MudNumericField T="decimal?" @bind-Value="_amount" Label="@($"Betrag ({_registry.Currency})")" Min="0m" Immediate="true" HideSpinButtons="true" />
+
+        <MudSelect T="string" @bind-Value="_ownerUuid" Label="@(_type == "INCOME" ? "Empfangen von" : "Bezahlt von")">
+            @foreach (var member in _members)
+            {
+                <MudSelectItem Value="@member.Uuid">@Format.MemberName(member)</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudDatePicker @bind-Date="_date" Label="Datum" Editable="true" />
+
+        @if (_type != "BALANCE")
+        {
+            <MudSelect T="EntryCategory" @bind-Value="_category" Label="Kategorie">
+                @foreach (var category in Format.Categories)
+                {
+                    <MudSelectItem Value="@category.Key">
+                        <MudStack Row="true" Spacing="2"><MudIcon Icon="@category.Icon" /> @category.Label</MudStack>
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudText Typo="Typo.subtitle1">Aufteilung</MudText>
+            <MudToggleGroup T="SplitMode" @bind-Value="_mode" Color="Color.Primary" FixedContent="true" Size="Size.Small">
+                <MudToggleItem Value="SplitMode.Equal" Text="Gleich" />
+                <MudToggleItem Value="SplitMode.Shares" Text="Anteile" />
+                <MudToggleItem Value="SplitMode.Amounts" Text="Beträge" />
+            </MudToggleGroup>
+
+            <MudStack Spacing="1">
+                @foreach (var member in _members)
+                {
+                    var state = _participants[member.Uuid!];
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                        <MudCheckBox T="bool" @bind-Value="state.Included" Label="@Format.MemberName(member)" />
+                        @if (state.Included && _mode != SplitMode.Equal)
+                        {
+                            <MudNumericField T="decimal?" @bind-Value="state.Value" Min="0m" Immediate="true" HideSpinButtons="true"
+                                             Margin="Margin.Dense" Style="max-width:120px"
+                                             Label="@(_mode == SplitMode.Shares ? "Anteil" : _registry.Currency)" />
+                        }
+                    </MudStack>
+                }
+            </MudStack>
+
+            @if (_mode == SplitMode.Amounts && _amount is decimal total)
+            {
+                var remaining = total - _participants.Values.Where(p => p.Included).Sum(p => p.Value ?? 0m);
+                <MudText Typo="Typo.caption" Color="@(remaining == 0 ? Color.Success : Color.Warning)">
+                    Verbleibend: @Format.Money(remaining, _registry.Currency)
+                </MudText>
+            }
+        }
+        else
+        {
+            <MudSelect T="string" @bind-Value="_toUuid" Label="Gezahlt an">
+                @foreach (var member in _members.Where(m => m.Uuid != _ownerUuid))
+                {
+                    <MudSelectItem Value="@member.Uuid">@Format.MemberName(member)</MudSelectItem>
+                }
+            </MudSelect>
+        }
+
+        <MudStack Spacing="1">
+            <MudText Typo="Typo.subtitle1">Belege</MudText>
+            @if (_existingAttachments.Count > 0)
+            {
+                <MudText Typo="Typo.caption">@_existingAttachments.Count vorhandene(r) Beleg(e) bleiben erhalten.</MudText>
+            }
+            @foreach (var receipt in _newReceipts)
+            {
+                var r = receipt;
+                <MudChip T="string" OnClose="() => _newReceipts.Remove(r)">@r.Name</MudChip>
+            }
+            <MudFileUpload T="IBrowserFile" Accept="image/*" FilesChanged="AddReceiptAsync">
+                <ActivatorContent>
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile" Size="Size.Small">Beleg hinzufügen</MudButton>
+                </ActivatorContent>
+            </MudFileUpload>
+        </MudStack>
+
+        <MudStack Row="true" Justify="Justify.SpaceBetween">
+            @if (EntryId is not null)
+            {
+                <MudButton Color="Color.Error" Variant="Variant.Text" Disabled="_busy" OnClick="DeleteAsync" StartIcon="@Icons.Material.Filled.Delete">Löschen</MudButton>
+            }
+            else
+            {
+                <span></span>
+            }
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_busy" OnClick="SaveAsync">Speichern</MudButton>
+        </MudStack>
+    </MudStack>
+}
+
+@code {
+    private enum SplitMode { Equal, Shares, Amounts }
+
+    private sealed class Participant
+    {
+        public bool Included { get; set; }
+        public decimal? Value { get; set; }
+    }
+
+    private sealed record Receipt(string Name, string ContentType, byte[] Content);
+
+    private const long MaxReceiptBytes = 8 * 1024 * 1024;
+
+    [Parameter] public long Id { get; set; }
+    [Parameter] public long? EntryId { get; set; }
+
+    private Registry? _registry;
+    private RegistryEntry? _entry;
+    private List<RegistryMembershipNonUser> _members = [];
+    private readonly Dictionary<string, Participant> _participants = [];
+    private readonly List<Receipt> _newReceipts = [];
+    private List<long> _existingAttachments = [];
+
+    private string _type = "NORMAL";
+    private string? _description;
+    private decimal? _amount;
+    private string? _ownerUuid;
+    private string? _toUuid;
+    private DateTime? _date = DateTime.Today;
+    private EntryCategory _category = EntryCategory.Uncategorized;
+    private SplitMode _mode = SplitMode.Equal;
+    private bool _loaded;
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _registry = (await Data.GetCachedRegistriesAsync()).FirstOrDefault(r => r.Id == Id);
+        _loaded = true;
+        if (_registry is null)
+        {
+            return;
+        }
+
+        _members = [.. Format.Members(_registry).Where(m => m.Uuid is not null && m.Status is null or "ACTIVE")];
+        _participants.Clear();
+        foreach (var member in _members)
+        {
+            _participants[member.Uuid!] = new Participant { Included = true, Value = 1m };
+        }
+
+        _ownerUuid = _registry.MembershipUuidActive is { } me && _participants.ContainsKey(me) ? me : _members.FirstOrDefault()?.Uuid;
+
+        if (EntryId is long entryId)
+        {
+            _entry = Format.Entries(_registry).FirstOrDefault(e => e.Id == entryId);
+            if (_entry is not null)
+            {
+                LoadEntry(_entry);
+            }
+        }
+    }
+
+    private void LoadEntry(RegistryEntry entry)
+    {
+        _type = entry.TypeTransaction?.ToUpperInvariant() ?? "NORMAL";
+        _description = entry.Description;
+        _amount = Math.Abs(BalanceCalculator.ParseAmount(entry.Amount));
+        _ownerUuid = BalanceCalculator.GetKey(entry.MembershipOwned) ?? _ownerUuid;
+        _date = Format.ParseDate(entry.Date) is var d && d != DateTime.MinValue ? d : DateTime.Today;
+        _category = entry.Category ?? EntryCategory.Uncategorized;
+        _existingAttachments = [.. (entry.Attachment ?? []).Select(FindId).Where(i => i is not null).Select(i => i!.Value)];
+
+        var allocations = entry.Allocations ?? [];
+        if (_type == "BALANCE")
+        {
+            _toUuid = allocations
+                .Where(a => Math.Abs(BalanceCalculator.ParseAmount(a.Amount)) > 0m)
+                .Select(a => BalanceCalculator.GetKey(a.Membership))
+                .FirstOrDefault();
+            return;
+        }
+
+        foreach (var participant in _participants.Values)
+        {
+            participant.Included = false;
+        }
+
+        var amounts = new List<decimal>();
+        foreach (var allocation in allocations)
+        {
+            var key = BalanceCalculator.GetKey(allocation.Membership);
+            if (key is null || !_participants.TryGetValue(key, out var participant))
+            {
+                continue;
+            }
+
+            var value = Math.Abs(BalanceCalculator.ParseAmount(allocation.Amount));
+            participant.Included = value > 0m || allocation.ShareRatio > 0m;
+            participant.Value = string.Equals(allocation.Type, "RATIO", StringComparison.OrdinalIgnoreCase) ? allocation.ShareRatio : value;
+            if (participant.Included)
+            {
+                amounts.Add(value);
+            }
+        }
+
+        if (allocations.Count > 0 && allocations.All(a => string.Equals(a.Type, "RATIO", StringComparison.OrdinalIgnoreCase)))
+        {
+            _mode = SplitMode.Shares;
+        }
+        else if (amounts.Count > 0 && amounts.Max() - amounts.Min() <= 0.011m)
+        {
+            _mode = SplitMode.Equal;
+        }
+        else
+        {
+            _mode = SplitMode.Amounts;
+        }
+    }
+
+    // The shape of attachments in entries is not modeled, take the first numeric "id" found.
+    private static long? FindId(System.Text.Json.JsonElement element)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name == "id" && property.Value.TryGetInt64(out var id))
+                {
+                    return id;
+                }
+
+                if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Object && FindId(property.Value) is { } nested)
+                {
+                    return nested;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private async Task AddReceiptAsync(IBrowserFile? file)
+    {
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxReceiptBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            _newReceipts.Add(new Receipt(file.Name, file.ContentType, memory.ToArray()));
+        }
+        catch (IOException ex)
+        {
+            Snackbar.Add($"Datei zu groß oder nicht lesbar: {ex.Message}", Severity.Warning);
+        }
+    }
+
+    private static string Value(decimal value)
+        => value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+
+    private Amount Money(decimal value) => new() { Value = Value(value), Currency = _registry!.Currency };
+
+    /// <summary>
+    /// Splits <paramref name="total"/> by weights; rounding differences are assigned to the first entry.
+    /// </summary>
+    private static List<decimal> Distribute(decimal total, IReadOnlyList<decimal> weights)
+    {
+        var sum = weights.Sum();
+        var parts = weights.Select(w => Math.Round(total * w / sum, 2, MidpointRounding.AwayFromZero)).ToList();
+        parts[0] += total - parts.Sum();
+        return parts;
+    }
+
+    private RegistryEntryRequest? BuildRequest()
+    {
+        if (_amount is not > 0m)
+        {
+            Snackbar.Add("Bitte einen Betrag größer 0 eingeben.", Severity.Warning);
+            return null;
+        }
+
+        if (_ownerUuid is null)
+        {
+            Snackbar.Add("Bitte auswählen, wer bezahlt hat.", Severity.Warning);
+            return null;
+        }
+
+        var total = Math.Round(_amount.Value, 2);
+        var sign = _type == "NORMAL" ? -1m : 1m;
+        var allocations = new List<RegistryEntryAllocationRequest>();
+
+        if (_type == "BALANCE")
+        {
+            if (_toUuid is null)
+            {
+                Snackbar.Add("Bitte den Empfänger auswählen.", Severity.Warning);
+                return null;
+            }
+
+            allocations.Add(new RegistryEntryAllocationRequest { MembershipUuid = _toUuid, Amount = Money(total), Type = "AMOUNT" });
+            allocations.Add(new RegistryEntryAllocationRequest { MembershipUuid = _ownerUuid, Amount = Money(0m), Type = "AMOUNT" });
+        }
+        else
+        {
+            var included = _members.Where(m => _participants[m.Uuid!].Included).ToList();
+            if (included.Count == 0)
+            {
+                Snackbar.Add("Bitte mindestens eine Person für die Aufteilung auswählen.", Severity.Warning);
+                return null;
+            }
+
+            List<decimal> amounts;
+            switch (_mode)
+            {
+                case SplitMode.Equal:
+                    amounts = Distribute(total, [.. included.Select(_ => 1m)]);
+                    break;
+                case SplitMode.Shares:
+                    var shares = included.Select(m => _participants[m.Uuid!].Value ?? 0m).ToList();
+                    if (shares.Any(s => s <= 0m))
+                    {
+                        Snackbar.Add("Anteile müssen größer 0 sein.", Severity.Warning);
+                        return null;
+                    }
+
+                    amounts = Distribute(total, shares);
+                    break;
+                default:
+                    amounts = [.. included.Select(m => Math.Round(_participants[m.Uuid!].Value ?? 0m, 2))];
+                    if (amounts.Sum() != total)
+                    {
+                        Snackbar.Add("Die Beträge müssen zusammen dem Gesamtbetrag entsprechen.", Severity.Warning);
+                        return null;
+                    }
+
+                    break;
+            }
+
+            for (var i = 0; i < included.Count; i++)
+            {
+                allocations.Add(new RegistryEntryAllocationRequest
+                {
+                    MembershipUuid = included[i].Uuid!,
+                    Amount = Money(sign * amounts[i]),
+                    Type = _mode == SplitMode.Shares ? "RATIO" : "AMOUNT",
+                    ShareRatio = _mode == SplitMode.Shares ? _participants[included[i].Uuid!].Value : null
+                });
+            }
+        }
+
+        var time = _entry is not null ? Format.ParseDate(_entry.Date).TimeOfDay : DateTime.Now.TimeOfDay;
+        var date = (_date ?? DateTime.Today).Date + time;
+
+        return new RegistryEntryRequest
+        {
+            Uuid = _entry?.Uuid ?? Guid.NewGuid().ToString(),
+            Description = _description,
+            Amount = Money(sign * total),
+            MembershipUuidOwner = _ownerUuid,
+            Allocations = allocations,
+            TypeTransaction = _type,
+            Status = EntryStatus.Active,
+            Date = date.ToString("yyyy-MM-dd HH:mm:ss.ffffff", System.Globalization.CultureInfo.InvariantCulture),
+            Category = _type == "BALANCE" ? null : _category,
+            CategoryCustom = _entry?.CategoryCustom,
+            Attachment = [.. _existingAttachments.Select(id => new EntryAttachmentRef { Id = id })]
+        };
+    }
+
+    private async Task SaveAsync()
+    {
+        var request = BuildRequest();
+        if (request is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            foreach (var receipt in _newReceipts)
+            {
+                var attachmentId = await Data.UploadReceiptAsync(Id, receipt.Content, receipt.ContentType);
+                request.Attachment!.Add(new EntryAttachmentRef { Id = attachmentId });
+            }
+
+            await Data.SaveEntryAsync(Id, EntryId, request);
+            Back();
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Speichern fehlgeschlagen: {ex.Message}", Severity.Error);
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (EntryId is not long entryId)
+        {
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBoxAsync("Ausgabe löschen", "Diese Ausgabe wirklich löschen?", yesText: "Löschen", cancelText: "Abbrechen");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await Data.DeleteEntryAsync(Id, entryId);
+            Back();
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Löschen fehlgeschlagen: {ex.Message}", Severity.Error);
+            _busy = false;
+        }
+    }
+
+    private void Back() => Navigation.NavigateTo($"group/{Id}");
+}

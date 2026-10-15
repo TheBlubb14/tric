@@ -1,0 +1,55 @@
+@inject DataService Data
+@inject ISnackbar Snackbar
+
+<MudStack Spacing="1">
+    @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null))
+    {
+        var m = member;
+        var isMe = m.Uuid == Registry.MembershipUuidActive;
+        <MudPaper Outlined="true" Class="pa-2 px-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudAvatar Size="Size.Small" Color="@(isMe ? Color.Primary : Color.Default)">@Initial(m)</MudAvatar>
+                    <MudText>@Format.MemberName(m)</MudText>
+                </MudStack>
+                @if (isMe)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">Ich</MudChip>
+                }
+                else if (!Format.IsArchived(Registry))
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_busy" OnClick="() => SetMeAsync(m)">Das bin ich</MudButton>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    [Parameter, EditorRequired] public Registry Registry { get; set; } = default!;
+
+    private bool _busy;
+
+    private static string Initial(RegistryMembershipNonUser member)
+    {
+        var name = Format.MemberName(member);
+        return name.Length > 0 ? name[..1].ToUpperInvariant() : "?";
+    }
+
+    private async Task SetMeAsync(RegistryMembershipNonUser member)
+    {
+        _busy = true;
+        try
+        {
+            await Data.UpdateRegistryAsync(Registry.Id, new UpdateRegistryRequest { MembershipUuidActive = member.Uuid });
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Fehlgeschlagen: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

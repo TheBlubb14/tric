@@ -1,0 +1,150 @@
+@page "/group/{Id:long}"
+@implements IDisposable
+@inject DataService Data
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Tric - @_registry?.Title</PageTitle>
+
+@if (_registry is null)
+{
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_loaded)
+    {
+        <MudAlert Severity="Severity.Warning">Gruppe nicht gefunden.</MudAlert>
+    }
+}
+else
+{
+    var entries = Format.Entries(_registry).ToList();
+    var balances = BalanceCalculator.Calculate(entries);
+    var me = _registry.MembershipUuidActive;
+    var myBalance = me is not null ? balances.GetValueOrDefault(me) : (decimal?)null;
+
+    <MudStack Spacing="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="Back" aria-label="Zurück" />
+            <MudText Typo="Typo.h4">@(string.IsNullOrEmpty(_registry.Emoji) ? "💶" : _registry.Emoji)</MudText>
+            <MudText Typo="Typo.h6" Class="mud-text-truncate">@_registry.Title</MudText>
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Tune" Href="@($"group/{Id}/settings")" aria-label="Gruppeneinstellungen" />
+        </MudStack>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true">@_error</MudAlert>
+        }
+
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.caption">Gesamtausgaben</MudText>
+                    <MudText Typo="Typo.h6">@Format.Money(BalanceCalculator.TotalExpenses(entries), _registry.Currency)</MudText>
+                </MudStack>
+                @if (myBalance is decimal mine)
+                {
+                    <MudStack Spacing="0" AlignItems="AlignItems.End">
+                        <MudText Typo="Typo.caption">Mein Saldo</MudText>
+                        <MudText Typo="Typo.h6" Color="@(mine < 0 ? Color.Error : Color.Success)">@Format.Money(mine, _registry.Currency)</MudText>
+                    </MudStack>
+                }
+            </MudStack>
+        </MudPaper>
+
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3" Centered="false">
+            <MudTabPanel Text="Ausgaben">
+                <ExpenseList Registry="_registry" />
+            </MudTabPanel>
+            <MudTabPanel Text="Salden">
+                <BalanceList Registry="_registry" Balances="balances" />
+            </MudTabPanel>
+            <MudTabPanel Text="Ausgleich">
+                <SettlementList Registry="_registry" Balances="balances" />
+            </MudTabPanel>
+            <MudTabPanel Text="Mitglieder">
+                <MemberList Registry="_registry" />
+            </MudTabPanel>
+            <MudTabPanel Text="Anhänge">
+                <GalleryTab Registry="_registry" />
+            </MudTabPanel>
+        </MudTabs>
+    </MudStack>
+
+    @if (!Format.IsArchived(_registry))
+    {
+        <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="@($"group/{Id}/entry")"
+                Style="position:fixed; right:16px; bottom:76px; z-index:1050;" aria-label="Ausgabe hinzufügen" />
+    }
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private Registry? _registry;
+    private bool _loading;
+    private bool _loaded;
+    private string? _error;
+    private long _loadedId;
+
+    protected override void OnInitialized() => Data.Changed += OnDataChanged;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _registry = null;
+        _loaded = false;
+        _error = null;
+        await InvokeAsync(StateHasChanged);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        // Local storage is only reachable after the circuit is interactive, which is the case for every call from here on.
+        _registry = (await Data.GetCachedRegistriesAsync()).FirstOrDefault(r => r.Id == Id);
+        _loaded = true;
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            _registry = await Data.RefreshRegistryAsync(Id) ?? _registry;
+            if (_registry is not null)
+            {
+                await Data.RefreshAttachmentsAsync(_registry);
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _error = $"Offline-Daten werden angezeigt ({ex.Message}).";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnDataChanged() => InvokeAsync(async () =>
+    {
+        _registry = (await Data.GetCachedRegistriesAsync()).FirstOrDefault(r => r.Id == Id) ?? _registry;
+        StateHasChanged();
+    });
+
+    private void Back() => Navigation.NavigateTo($"/");
+
+    public void Dispose() => Data.Changed -= OnDataChanged;
+}

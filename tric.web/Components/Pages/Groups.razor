@@ -1,0 +1,133 @@
+@page "/"
+@implements IDisposable
+@inject DataService Data
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Tric - Gruppen</PageTitle>
+
+<MudStack Spacing="2">
+    <MudText Typo="Typo.h5">Meine Gruppen</MudText>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true">@_error</MudAlert>
+    }
+
+    @if (_loaded && _registries.Count == 0)
+    {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudText>Noch keine Gruppen. Lege eine neue Gruppe an oder tritt einer bestehenden per Link bei.</MudText>
+        </MudPaper>
+    }
+
+    @foreach (var registry in _registries)
+    {
+        var members = Format.Members(registry).Count();
+        var entries = Format.Entries(registry).Where(e => e.Status is null or EntryStatus.Active).Count();
+        <MudCard Outlined="true" Class="cursor-pointer" @onclick="() => Open(registry)">
+            <MudCardContent>
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                    <MudText Typo="Typo.h4">@(string.IsNullOrEmpty(registry.Emoji) ? "💶" : registry.Emoji)</MudText>
+                    <MudStack Spacing="0" Style="min-width:0">
+                        <MudText Typo="Typo.h6" Class="mud-text-truncate">@(registry.Title ?? registry.Description)</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            @members Mitglieder · @entries Ausgaben · @registry.Currency
+                        </MudText>
+                    </MudStack>
+                    <MudSpacer />
+                    @if (Format.IsArchived(registry))
+                    {
+                        <MudChip T="string" Size="Size.Small">Archiviert</MudChip>
+                    }
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+    }
+</MudStack>
+
+<div style="position:fixed; right:16px; bottom:76px; z-index:1050; display:flex; flex-direction:column; align-items:flex-end; gap:12px;">
+    <MudFab Size="Size.Medium" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Link" Label="Join via link" OnClick="JoinAsync" />
+    <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.GroupAdd" Label="New group" OnClick="CreateAsync" />
+</div>
+
+@code {
+    private List<Registry> _registries = [];
+    private bool _loading;
+    private bool _loaded;
+    private string? _error;
+
+    protected override void OnInitialized() => Data.Changed += OnDataChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await LoadCachedAsync();
+        _loaded = true;
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            await Data.RefreshRegistriesAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            _error = _registries.Count > 0
+                ? $"Offline-Daten werden angezeigt ({ex.Message})."
+                : $"Laden fehlgeschlagen: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadCachedAsync()
+    {
+        _registries = [.. (await Data.GetCachedRegistriesAsync())
+            .OrderBy(Format.IsArchived)
+            .ThenBy(r => r.Title, StringComparer.CurrentCultureIgnoreCase)];
+    }
+
+    private void OnDataChanged() => InvokeAsync(async () =>
+    {
+        await LoadCachedAsync();
+        StateHasChanged();
+    });
+
+    private void Open(Registry registry) => Navigation.NavigateTo($"group/{registry.Id}");
+
+    private async Task CreateAsync()
+    {
+        var dialog = await DialogService.ShowAsync<CreateGroupDialog>("Neue Gruppe");
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: long id })
+        {
+            Navigation.NavigateTo($"group/{id}");
+        }
+    }
+
+    private async Task JoinAsync()
+    {
+        var dialog = await DialogService.ShowAsync<JoinGroupDialog>("Gruppe beitreten");
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            Snackbar.Add("Gruppe hinzugefügt", Severity.Success);
+        }
+    }
+
+    public void Dispose() => Data.Changed -= OnDataChanged;
+}

@@ -1,0 +1,53 @@
+@inject NavigationManager Navigation
+
+@{
+    var entries = Format.Entries(Registry)
+        .Where(e => e.Status is null or EntryStatus.Active)
+        .OrderByDescending(e => Format.ParseDate(e.Date))
+        .ThenByDescending(e => e.Id)
+        .ToList();
+}
+
+@if (entries.Count == 0)
+{
+    <MudText Color="Color.Secondary">Noch keine Ausgaben.</MudText>
+}
+else
+{
+    <MudList T="RegistryEntry" Dense="false" Clickable="true">
+        @foreach (var entry in entries)
+        {
+            var amount = Math.Abs(BalanceCalculator.ParseAmount(entry.Amount));
+            var type = entry.TypeTransaction?.ToUpperInvariant();
+            var icon = type == "BALANCE" ? Icons.Material.Filled.SwapHoriz
+                : type == "INCOME" ? Icons.Material.Filled.TrendingUp
+                : Format.CategoryIcon(entry.Category);
+            var color = type == "INCOME" ? Color.Success : Color.Default;
+            var e = entry;
+            <MudListItem T="RegistryEntry" Icon="@icon" OnClick="() => Open(e)">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudStack Spacing="0" Style="min-width:0">
+                        <MudText Typo="Typo.body1" Class="mud-text-truncate">@Title(entry)</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @Format.Date(Format.ParseDate(entry.Date))
+                        </MudText>
+                    </MudStack>
+                    <MudText Typo="Typo.body1" Color="@color" Style="white-space:nowrap">
+                        @Format.Money(amount, entry.Amount?.Currency ?? Registry.Currency)
+                    </MudText>
+                </MudStack>
+            </MudListItem>
+        }
+    </MudList>
+}
+
+@code {
+    [Parameter, EditorRequired] public Registry Registry { get; set; } = default!;
+
+    private static string Title(RegistryEntry entry)
+        => string.IsNullOrWhiteSpace(entry.Description)
+            ? (string.Equals(entry.TypeTransaction, "BALANCE", StringComparison.OrdinalIgnoreCase) ? "Rückzahlung" : "Ausgabe")
+            : entry.Description;
+
+    private void Open(RegistryEntry entry) => Navigation.NavigateTo($"group/{Registry.Id}/entry/{entry.Id}");
+}

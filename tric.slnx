@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="tric.lib.Tests/tric.lib.Tests.csproj" />
+  <Project Path="tric.lib/tric.lib.csproj" />
+  <Project Path="tric.web/tric.web.csproj" />
+</Solution>

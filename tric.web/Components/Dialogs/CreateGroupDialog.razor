@@ -1,0 +1,45 @@
+@inject DataService Data
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField @bind-Value="_title" Label="Titel" Required="true" Immediate="true" AutoFocus="true" />
+            <MudSelect T="string" @bind-Value="_currency" Label="Währung">
+                @foreach (var currency in Format.Currencies)
+                {
+                    <MudSelectItem Value="@currency">@currency</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField @bind-Value="_description" Label="Beschreibung" Lines="2" />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Abbrechen</MudButton>
+        <MudButton Color="Color.Primary" Disabled="@(_busy || string.IsNullOrWhiteSpace(_title))" OnClick="CreateAsync">Anlegen</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private string _title = string.Empty;
+    private string _currency = "EUR";
+    private string? _description;
+    private bool _busy;
+
+    private async Task CreateAsync()
+    {
+        _busy = true;
+        try
+        {
+            var id = await Data.CreateRegistryAsync(_title.Trim(), _currency, _description);
+            MudDialog.Close(DialogResult.Ok(id));
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Anlegen fehlgeschlagen: {ex.Message}", Severity.Error);
+            _busy = false;
+        }
+    }
+}

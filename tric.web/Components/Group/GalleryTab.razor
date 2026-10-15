@@ -1,0 +1,109 @@
+@inject DataService Data
+@inject ISnackbar Snackbar
+
+<MudStack Spacing="2">
+    @if (!Format.IsArchived(Registry))
+    {
+        <MudFileUpload T="IBrowserFile" Accept="image/*" FilesChanged="UploadAsync">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AddPhotoAlternate" Disabled="_busy">Foto hinzufügen</MudButton>
+            </ActivatorContent>
+        </MudFileUpload>
+    }
+
+    @if (_items.Count == 0)
+    {
+        <MudText Color="Color.Secondary">Keine Anhänge.</MudText>
+    }
+
+    <MudGrid Spacing="1">
+        @foreach (var item in _items)
+        {
+            var i = item;
+            <MudItem xs="6" sm="4">
+                <MudPaper Outlined="true" Class="pa-1">
+                    @if (i.DataUrl is not null)
+                    {
+                        <img src="@i.DataUrl" alt="Anhang" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px;" />
+                    }
+                    else
+                    {
+                        <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Style="aspect-ratio:1">
+                            <MudIcon Icon="@Icons.Material.Filled.ImageNotSupported" />
+                            <MudText Typo="Typo.caption">Nicht offline verfügbar</MudText>
+                        </MudStack>
+                    }
+                    @if (!Format.IsArchived(Registry))
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Disabled="_busy" OnClick="() => DeleteAsync(i)" aria-label="Löschen" />
+                    }
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+</MudStack>
+
+@code {
+    private sealed record Item(string Uuid, string? DataUrl);
+
+    private const long MaxUploadBytes = 8 * 1024 * 1024;
+
+    [Parameter, EditorRequired] public Registry Registry { get; set; } = default!;
+
+    private List<Item> _items = [];
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var attachments = await Data.GetCachedAttachmentsAsync(Registry.Id);
+        var items = new List<Item>();
+        foreach (var info in attachments.Select(a => a.Attachment).Where(a => a?.Uuid is not null))
+        {
+            items.Add(new Item(info!.Uuid!, await Data.GetAttachmentDataUrlAsync(info.Uuid!)));
+        }
+
+        _items = items;
+    }
+
+    private async Task UploadAsync(IBrowserFile? file)
+    {
+        if (file is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxUploadBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            await Data.UploadGalleryImageAsync(Registry, memory.ToArray(), file.ContentType);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            Snackbar.Add($"Upload fehlgeschlagen: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync(Item item)
+    {
+        _busy = true;
+        try
+        {
+            await Data.DeleteGalleryImageAsync(Registry, item.Uuid);
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Löschen fehlgeschlagen: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

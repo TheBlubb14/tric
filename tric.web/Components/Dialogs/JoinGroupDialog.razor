@@ -1,0 +1,37 @@
+@inject DataService Data
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.body2">Füge den Freigabe-Link (z. B. https://tricount.com/tABC123xyz) oder nur den Schlüssel ein.</MudText>
+            <MudTextField @bind-Value="_link" Label="Link oder Schlüssel" Immediate="true" AutoFocus="true" />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Abbrechen</MudButton>
+        <MudButton Color="Color.Primary" Disabled="@(_busy || string.IsNullOrWhiteSpace(_link))" OnClick="JoinAsync">Beitreten</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private string _link = string.Empty;
+    private bool _busy;
+
+    private async Task JoinAsync()
+    {
+        _busy = true;
+        try
+        {
+            await Data.JoinRegistryAsync(_link);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (HttpRequestException ex)
+        {
+            Snackbar.Add($"Beitreten fehlgeschlagen: {ex.Message}", Severity.Error);
+            _busy = false;
+        }
+    }
+}

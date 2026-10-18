@@ -2,15 +2,25 @@
 @inject ISnackbar Snackbar
 
 <MudStack Spacing="1">
-    @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null))
+    @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null).OrderBy(Format.MemberName))
     {
         var m = member;
         var isMe = m.Uuid == Registry.MembershipUuidActive;
+        var memberName = Format.MemberName(m);
         <MudPaper Outlined="true" Class="pa-2 px-3">
             <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudAvatar Size="Size.Small" Color="@(isMe ? Color.Primary : Color.Default)">@Initial(m)</MudAvatar>
-                    <MudText>@Format.MemberName(m)</MudText>
+                    @if (m.Remover is null)
+                    {
+                        <MudText>@memberName</MudText>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="@($"deleted by {m.Remover.DisplayName}")">
+                            <MudText Style="text-decoration: line-through;">@memberName</MudText>
+                        </MudTooltip>
+                    }
                 </MudStack>
                 @if (isMe)
                 {

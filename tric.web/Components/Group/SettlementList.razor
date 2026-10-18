@@ -13,18 +13,18 @@
 else
 {
     <MudStack Spacing="2">
-        @foreach (var transfer in transfers)
+        @foreach (var transfer in transfers.Select(x => new { t = x, from = NameOf(x.FromMembershipUuid), to = NameOf(x.ToMembershipUuid) }).OrderBy(x => x.t.FromMembershipUuid == Registry.MembershipUuidActive ? " " : x.from))
         {
             var t = transfer;
             <MudPaper Outlined="true" Class="pa-3">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                     <MudStack Spacing="0">
-                        <MudText>@NameOf(t.FromMembershipUuid) → @NameOf(t.ToMembershipUuid)</MudText>
-                        <MudText Typo="Typo.h6">@Format.Money(t.Amount, Registry.Currency)</MudText>
+                        <MudText>@t.from → @t.to</MudText>
+                        <MudText Typo="Typo.h6">@Format.Money(t.t.Amount, Registry.Currency)</MudText>
                     </MudStack>
                     @if (!Format.IsArchived(Registry))
                     {
-                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="() => RecordAsync(t)">Als bezahlt erfassen</MudButton>
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="() => RecordAsync(t.t)">Als bezahlt erfassen</MudButton>
                     }
                 </MudStack>
             </MudPaper>

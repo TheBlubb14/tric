@@ -5,12 +5,23 @@
 else
 {
     <MudList T="string" Dense="true">
-        @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null))
+        @foreach (var member in Format.Members(Registry).Where(m => m.Uuid is not null).OrderBy(Format.MemberName))
         {
             var balance = Balances.GetValueOrDefault(member.Uuid!);
+            var memberName = Format.MemberName(member) + (member.Uuid == Registry.MembershipUuidActive ? " (ich)" : "");
             <MudListItem T="string">
                 <MudStack Row="true" Justify="Justify.SpaceBetween">
-                    <MudText>@Format.MemberName(member)@(member.Uuid == Registry.MembershipUuidActive ? " (ich)" : "")</MudText>
+                    @if (member.Remover is null)
+                    {
+                        <MudText>@memberName</MudText>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="@($"deleted by {member.Remover.DisplayName}")">
+                            <MudText Style="text-decoration: line-through;">@memberName</MudText>
+                        </MudTooltip>
+                    }
+
                     <MudText Color="@(balance < 0 ? Color.Error : balance > 0 ? Color.Success : Color.Default)">
                         @Format.Money(balance, Registry.Currency)
                     </MudText>

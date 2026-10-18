@@ -41,6 +41,12 @@ public static class BalanceCalculator
             }
         }
 
+        // Ratio shares are kept unrounded while summing; the app shows rounded balances.
+        foreach (var key in balances.Keys.ToList())
+        {
+            balances[key] = Math.Round(balances[key], 2, MidpointRounding.AwayFromZero);
+        }
+
         return balances;
     }
 
@@ -82,16 +88,21 @@ public static class BalanceCalculator
             .Where(a => a.Key is not null)
             .ToList();
 
-        var totalRatio = allocations.Sum(a => a.Allocation.ShareRatio ?? 0m);
+        static bool IsRatio(RegistryEntryAllocation a)
+            => string.Equals(a.Type, "RATIO", StringComparison.OrdinalIgnoreCase) && a.ShareRatio is > 0m;
+
+        // Like the Tricount app: fixed amounts are taken as they are, the remainder is split by ratio (unrounded).
+        var totalRatio = allocations.Where(a => IsRatio(a.Allocation)).Sum(a => a.Allocation.ShareRatio!.Value);
+        var fixedAmount = allocations.Where(a => !IsRatio(a.Allocation))
+            .Sum(a => Math.Abs(ParseAmount(a.Allocation.AmountLocal ?? a.Allocation.Amount)));
 
         foreach (var (key, allocation) in allocations)
         {
             var amount = Math.Abs(ParseAmount(allocation.AmountLocal ?? allocation.Amount));
-            var isRatio = string.Equals(allocation.Type, "RATIO", StringComparison.OrdinalIgnoreCase);
 
-            if ((isRatio || amount == 0m) && totalRatio > 0m && allocation.ShareRatio is decimal ratio)
+            if (IsRatio(allocation))
             {
-                amount = Math.Round(total * ratio / totalRatio, 2, MidpointRounding.AwayFromZero);
+                amount = (total - fixedAmount) * allocation.ShareRatio!.Value / totalRatio;
             }
 
             yield return (key!, amount);

@@ -10,7 +10,7 @@ public sealed class Api : IDisposable
 {
     private const string BaseUrl = "https://api.tricount.bunq.com";
     private const string ClientRequestId = "049bfcdf-6ae4-4cee-af7b-45da31ea85d0";
-    private const string UserAgent = "com.bunq.tricount.android:RELEASE:7.0.7:3174:ANDROID:13:C";
+    private const string UserAgent = "com.tribab.tricount.android:RELEASE:14.9.1:500004158:ANDROID:13:C";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
